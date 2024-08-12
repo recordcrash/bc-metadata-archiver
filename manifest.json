@@ -1,0 +1,33 @@
+{
+    "manifest_version": 3,
+    "name": "Bandcamp Metadata Archiver",
+    "version": "1.0",
+    "description": "Download metadata and art from Bandcamp albums and tracks.",
+    "permissions": ["tabs", "downloads", "activeTab"],
+    "background": {
+      "service_worker": "background.js",
+      "scripts": ["background.js"]
+    },
+    "action": {
+      "default_icon": {
+        "16": "icons/off-16.png",
+        "48": "icons/off-48.png",
+        "128": "icons/off-128.png"
+      },
+      "default_title": "Download Metadata"
+    },
+    "icons": {
+      "16": "icons/off-16.png",
+      "48": "icons/off-48.png",
+      "128": "icons/off-128.png"
+    },
+    "content_scripts": [
+      {
+        "matches": ["*://*.bandcamp.com/album/*", "*://*.bandcamp.com/track/*"],
+        "js": [
+          "browser-polyfill.js",
+          "content.js"
+        ]
+      }
+    ]
+  }
