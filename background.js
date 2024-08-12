@@ -1,14 +1,22 @@
 // background.js
 
+// Import utility functions
+import { 
+    normalizeFileName, 
+    normalizeTrackName, 
+    setActionState, 
+    downloadArtDirectly, 
+    createEmptyYamlFile, 
+    urlIsApplicable 
+} from './utils.js';
+
 const ACTION_TITLE_APPLY = "Download Metadata";
 const ACTION_TITLE_REMOVE = "Cancel Download";
-const BANDCAMP_URL_REGEX = /https:\/\/[a-zA-Z0-9-]+\.bandcamp\.com\/(album|track)\/[a-zA-Z0-9-]+/;
 
 /*
 Toggle action status: if it's downloading, cancel it; if it's not, download metadata.
 */
 function toggleStatus(tab) {
-    // Get the current action title to decide whether to start or cancel the download
     browser.action.getTitle({ tabId: tab.id }).then((currentTitle) => {
         if (currentTitle === ACTION_TITLE_APPLY) {
             startDownload(tab);
@@ -25,9 +33,7 @@ Start download process for the current album.
 */
 function startDownload(tab) {
     console.log("Starting download for " + tab.url);
-    // Set the icon and title to indicate download is in progress
-    browser.action.setTitle({ tabId: tab.id, title: ACTION_TITLE_REMOVE });
-    browser.action.setIcon({ tabId: tab.id, path: "icons/on.svg" });
+    setActionState(tab.id, ACTION_TITLE_REMOVE, "icons/on.svg");
 
     // Request album metadata from the content script
     browser.tabs.sendMessage(tab.id, { action: 'getTrackInfo' }).then((response) => {
@@ -35,15 +41,20 @@ function startDownload(tab) {
             console.log(`Album Art URL: ${response.artUrl}`);
             console.log(`Album Title: ${response.title}`);
             
-            // Download album art
-            downloadArt(response.artUrl, response.title);
+            // Download album art as cover
+            let albumArtUrl = response.artUrl.replace(/_10\.(jpg|png)$/, '_0.$1');
+            const albumName = normalizeFileName(response.title, "-", true);
+
+            downloadArtDirectly(albumArtUrl, albumName, "cover", true);
+
+            // Create an empty YAML file for album metadata
+            createEmptyYamlFile(albumName);
         } else {
-            console.error("Could not find album information.");
-            alert("Could not find album information on this page.");
+            console.error("Could not find album information on this page.");
         }
 
         // Now handle each track
-        extractTracksAndDownload(tab);
+        extractTracksAndDownload(tab, response.title);
     }).catch(error => {
         console.error("Failed to retrieve album metadata: ", error);
         cancelDownload(tab);
@@ -53,21 +64,25 @@ function startDownload(tab) {
 /*
 Extract track URLs and initiate downloads for each.
 */
-function extractTracksAndDownload(tab) {
-    // Request track URLs from the content script
+function extractTracksAndDownload(tab, albumTitle) {
     browser.tabs.sendMessage(tab.id, { action: 'getTrackList' }).then((response) => {
         if (response && response.trackLinks) {
             console.log("Extracted track URLs:", response.trackLinks);
 
+            let remainingTracks = response.trackLinks.length;
+
             response.trackLinks.forEach(track => {
                 console.log("Opening track URL: ", track.url);
-                // Open each track in a new tab
                 browser.tabs.create({ url: track.url, active: false }).then(newTab => {
-                    // Wait for the tab to fully load before extracting data
                     browser.tabs.onUpdated.addListener(function listener(tabId, changeInfo) {
                         if (tabId === newTab.id && changeInfo.status === 'complete') {
                             browser.tabs.onUpdated.removeListener(listener);
-                            handleTrackTab(newTab.id, track.title);
+                            handleTrackTab(newTab.id, track.title, albumTitle, () => {
+                                remainingTracks--;
+                                if (remainingTracks === 0) {
+                                    finalizeDownloadProcess();
+                                }
+                            });
                         }
                     });
                 }).catch(error => {
@@ -85,40 +100,35 @@ function extractTracksAndDownload(tab) {
 /*
 Handle extraction and download of track data from a specific tab.
 */
-function handleTrackTab(tabId, trackTitle) {
-    // Request track metadata from the content script
+function handleTrackTab(tabId, trackTitle, albumTitle, callback) {
     browser.tabs.sendMessage(tabId, { action: 'getTrackInfo' }).then((response) => {
         if (response && response.artUrl) {
             console.log(`Track Art URL: ${response.artUrl}`);
             console.log(`Track Title: ${trackTitle}`);
             
-            // Download track art
-            downloadArt(response.artUrl, trackTitle);
+            // Adjust the track art URL and normalize the track name
+            let trackArtUrl = response.artUrl.replace(/_10\.(jpg|png)$/, '_0.$1');
+            const normalizedTrackName = normalizeTrackName(trackTitle);
+            const albumName = normalizeFileName(albumTitle, "-", true);
+
+            downloadArtDirectly(trackArtUrl, albumName, normalizedTrackName);
         } else {
             console.error("Could not find track information.");
         }
     }).catch(error => {
         console.error("Failed to retrieve track metadata: ", error);
     }).finally(() => {
-        // Close the tab once done
         browser.tabs.remove(tabId).catch(err => console.error("Failed to close tab: ", err));
+        callback(); // Decrement the track counter and check if all are done
     });
 }
 
 /*
-Download the art using the specified URL and title.
+Finalize the download process: reset the icon and provide feedback.
 */
-function downloadArt(artUrl, title) {
-    browser.downloads.download({
-        url: artUrl,
-        filename: `${title}.jpg`,
-        conflictAction: 'uniquify',
-        saveAs: false
-    }).then(downloadId => {
-        console.log(`Download started with ID: ${downloadId}`);
-    }).catch(error => {
-        console.error("Download failed: ", error);
-    });
+function finalizeDownloadProcess() {
+    setActionState(null, ACTION_TITLE_APPLY, "icons/off.svg");
+    console.log("Download complete!");
 }
 
 /*
@@ -127,18 +137,8 @@ Update the page action's title and icon to reflect its state.
 */
 function cancelDownload(tab) {
     console.log("Download canceled for " + tab.url);
-    browser.action.setTitle({ tabId: tab.id, title: ACTION_TITLE_APPLY });
-    browser.action.setIcon({ tabId: tab.id, path: "icons/off.svg" });
+    setActionState(tab.id, ACTION_TITLE_APPLY, "icons/off.svg");
     initializePageAction(tab);
-}
-
-/*
-Returns true only if the URL is a valid Bandcamp album URL.
-*/
-function urlIsApplicable(urlString) {
-    const isBandcamp = BANDCAMP_URL_REGEX.test(urlString);
-    console.log("URL is Bandcamp: " + isBandcamp);
-    return isBandcamp;
 }
 
 /*
@@ -147,12 +147,9 @@ Only operates on tabs whose URL is applicable.
 */
 function initializePageAction(tab) {
     if (urlIsApplicable(tab.url)) {
-        // Set icon and title for applicable pages
-        browser.action.setIcon({ tabId: tab.id, path: "icons/off.svg" });
-        browser.action.setTitle({ tabId: tab.id, title: ACTION_TITLE_APPLY });
+        setActionState(tab.id, ACTION_TITLE_APPLY, "icons/off.svg");
     } else {
-        browser.action.setIcon({ tabId: tab.id, path: "icons/disabled.svg" });
-        browser.action.setTitle({ tabId: tab.id, title: "Not a Bandcamp Album" });
+        setActionState(tab.id, "Not a Bandcamp Album", "icons/disabled.svg");
     }
 }
 

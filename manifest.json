@@ -3,11 +3,16 @@
     "name": "Bandcamp Metadata Archiver",
     "version": "1.0",
     "description": "Download metadata and art from Bandcamp albums and tracks.",
-    "permissions": ["tabs", "downloads", "activeTab"],
+    "permissions": ["tabs", "downloads", "activeTab", "webRequest", "webRequestBlocking"],
     "background": {
       "service_worker": "background.js",
-      "scripts": ["background.js"]
+      "scripts": ["background.js"],
+      "type": "module"
     },
+    "host_permissions": [
+      "*://*.bandcamp.com/*",
+      "*://*.bcbits.com/*"
+    ],
     "action": {
       "default_icon": {
         "16": "icons/off-16.png",
@@ -23,11 +28,12 @@
     },
     "content_scripts": [
       {
-        "matches": ["*://*.bandcamp.com/album/*", "*://*.bandcamp.com/track/*"],
+        "matches": ["*://*.bandcamp.com/*", "*://*.bcbits.com/*"],
         "js": [
           "browser-polyfill.js",
           "content.js"
-        ]
+        ],
+        "run_at": "document_end"
       }
     ]
   }
